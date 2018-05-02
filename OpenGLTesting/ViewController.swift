@@ -9,12 +9,24 @@
 import UIKit
 import GLKit
 import AVFoundation
+import CoreMotion
+
 
 class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
 
     
     //MARK: outlets
     @IBOutlet weak var cameraView: UIView!
+    
+    let motionManager = CMMotionManager()
+    var timer:Timer!;
+    
+    var accData = (x: 0.0, y: 0.0, z:0.0)
+    var isFlat: Bool = false;
+
+    
+    
+
     
     //MARK: Variables
     var droppedFrames = 0
@@ -52,7 +64,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
        let session = AVCaptureSession()
        //testing difference between the two modes
         //session.sessionPreset = AVCaptureSession.Preset.high
-        session.sessionPreset = AVCaptureSession.Preset.photo
+        session.sessionPreset = AVCaptureSession.Preset.low
         return session
     }()
     
@@ -60,7 +72,10 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     //MARK: viewController methods
     override func viewDidLoad() {
         super.viewDidLoad()
-        
+        motionManager.startAccelerometerUpdates()
+        timer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(ViewController.updateAcc), userInfo: nil, repeats: true)
+
+
         setupCameraSession()
     }
 
@@ -118,7 +133,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             let mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[2]//<==32 Bit BGRA
             print("Pixel Type: \(mostValidPixelType)")
             dataOutput.videoSettings = [(kCVPixelBufferPixelFormatTypeKey as NSString):NSNumber(value: mostValidPixelType)] as [String : Any] //kCVPixelFormatType_32RGBA <== it really wants a string
-            dataOutput.alwaysDiscardsLateVideoFrames = false //May have to relax this...I can't believe it will drop frames processing black
+            dataOutput.alwaysDiscardsLateVideoFrames = true //May have to relax this...I can't believe it will drop frames processing black
             
             if cameraSession.canAddOutput(dataOutput){
                 cameraSession.addOutput(dataOutput)
@@ -137,41 +152,76 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     //MARK: AVCaptureVideoDataOutputSampleBufferDelegate
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         
-
+        if !isFlat{
+            if glContext != EAGLContext.current(){
+                EAGLContext.setCurrent(glContext)
+            }
+            
+            
+            let invalidStateImage = UIImage(named: "spongeBob")
+            let invalidCIImage = CIImage(cgImage: (invalidStateImage?.cgImage)!)
+                glView.bindDrawable()
+            ciContext.draw((invalidCIImage), in: newFrame, from: (invalidCIImage.extent))
+                glView.display()
+                //print("Put Phone Flat")
+            
+            return;
+        }
         
         //lets get those frames
         let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
         let image = CIImage(cvPixelBuffer: pixelBuffer!)
-      
-        let bufferW = CVPixelBufferGetWidth(pixelBuffer!)
-        let bufferH = CVPixelBufferGetHeight(pixelBuffer!)
-        let numPlanes = CVPixelBufferGetPlaneCount(pixelBuffer!)
+    
+        let uiImage = UIImage(cgImage: convertCIImageToCGImage(inputImage: image))
+        let cosmicImage = CosmicImage(image: uiImage);
+        
 
         
-        var pixelX : Int = 0//use for location of event
-        var pixelY : Int = 0
+        var highestIntensity = CGFloat.leastNormalMagnitude;
+        var highestIntensityPoint = CGPoint(x: -1, y: -1);
+        
+        // Initialise an UIImage with our image data
+        //let capturedImage = UIImage.init(data: imageData , scale: 1.0)
+      
+        let width = CVPixelBufferGetWidth(pixelBuffer!)
+        let height = CVPixelBufferGetHeight(pixelBuffer!)
+
         let pixelW : Int = 100
         
-        //lets look thru
-        /*
-         for (i , p) in pixelBuffer.enumerated(){
-         print("+++++++++++++++++++++++++++++++++++++++++++++++++++++")
-         print("Pixel Info : \(i) ,  \(p.description)")
-         print("+++++++++++++++++++++++++++++++++++++++++++++++++++++")
-         }
-         */
+        
+        let pixelsToSkip = 10;
+        
+        for i in stride(from: 0, to: width, by: pixelsToSkip) {
+            for j in stride(from: 0, to: height, by: pixelsToSkip) {
+                let c = (cosmicImage.getColor(x: i, y: j))
+                
+                let intensity = c.red + c.blue + c.green
+                
+                if(intensity > highestIntensity){
+                    highestIntensity = intensity;
+                    highestIntensityPoint = CGPoint(x: i, y: j);
+                }
+                
+            }
+            
+            //print("Analyzing Row \(i)")
+        }
+        
+        
+
+        if(highestIntensity >= 300){
+            let pixelX = Int(highestIntensityPoint.x);
+            let pixelY = Int(highestIntensityPoint.y);
+            AudioServicesPlayAlertSound(SystemSoundID(1322))
+            //print("Found me a cosmic  ray")
+            UIImageWriteToSavedPhotosAlbum(uiImage.crop(cropRect: CGRect(x: pixelX - pixelW/2, y: pixelX - pixelW/2, width: pixelX + pixelW/2, height: pixelX + pixelW/2)), nil, nil, nil)
+        }
+        
+    
+        
+    
 
         
-     // image.cropped(to:  CGRect(x: pixelX - pixelW/2, y: pixelX - pixelW/2, width: pixelX + pixelW/2, height: pixelX + pixelW/2))
-        
-     /*   print("+++++++++++++++++++++++++++++++++++++++++++++++++++++")
-        print("PixelInfo -")
-        print("\t  width: \(bufferW)")
-        print("\t  height: \(bufferH)")
-        print("\t  planes: \(numPlanes)")
-        print("+++++++++++++++++++++++++++++++++++++++++++++++++++++")
-       */
-
         
         if glContext != EAGLContext.current(){
             EAGLContext.setCurrent(glContext)
@@ -181,8 +231,78 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         ciContext.draw(image, in: newFrame, from: image.extent)
         glView.display()
         
+        
+    }
+    func pixelFrom(x: Int, y: Int, frame: CVPixelBuffer) -> (UInt8, UInt8, UInt8) {
+        let baseAddress = CVPixelBufferGetBaseAddress(frame)
+        
+        //let width = CVPixelBufferGetWidth(frame)
+        //let height = CVPixelBufferGetHeight(frame)
+        
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(frame)
+        let buffer = baseAddress!.assumingMemoryBound(to: UInt8.self)
+        
+        let index = x+y*bytesPerRow
+        let b = buffer[index]
+        let g = buffer[index+1]
+        let r = buffer[index+2]
+        
+        return (r, g, b)
+    }
+    func convertCIImageToCGImage(inputImage: CIImage) -> CGImage! {
+        let context = CIContext(options: nil)
+        if context != nil {
+            return context.createCGImage(inputImage, from: inputImage.extent)
+        }
+        return nil
     }
     
+    @objc func updateAcc() {
+//        if let accelerometerData = motionManager.accelerometerData {
+//            print(accelerometerData)
+//        }
+        if let ad = motionManager.accelerometerData {
+        
+            accData.x = ad.acceleration.x
+            accData.y = ad.acceleration.y;
+            accData.z = ad.acceleration.z;
+          //  print("RAWWWW:  x: \(ad.rotationRate.x) y: \(ad.rotationRate.y) z: \(ad.rotationRate.z)")
+            
+        }
+        isFlat = accData.z <= -0.95;
+        //print("x: \(accData.x) y: \(accData.y) z: \(accData.z)")
+        //print(isFlat)
+//        if let magnetometerData = motionManager.magnetometerData {
+//            print(magnetometerData)
+//        }
+//        if let deviceMotion = motionManager.deviceMotion {
+//            print(deviceMotion)
+//        }
+    }
     
 }
 
+extension UIColor {
+    var red: CGFloat{ return self.cgColor.components![0] }
+    var green: CGFloat{ return self.cgColor.components![1] }
+    var blue: CGFloat{ return self.cgColor.components![2] }
+}
+extension UIImage {
+
+    func crop(cropRect:CGRect) -> UIImage
+    {
+        UIGraphicsBeginImageContextWithOptions(cropRect.size, false, 0);
+        let context = UIGraphicsGetCurrentContext();
+        
+        context?.translateBy(x: 0.0, y: self.size.height);
+        context?.scaleBy(x: 1.0, y: -1.0);
+        context?.draw(self.cgImage!, in: CGRect(x:0, y:0, width:self.size.width, height:self.size.height), byTiling: false);
+        context?.clip(to: [cropRect]);
+        
+        let croppedImage = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        
+        return croppedImage!;
+    }
+    
+}

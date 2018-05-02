@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		20D62A78208E54230033B4E0 /* CosmicImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D62A77208E54230033B4E0 /* CosmicImage.swift */; };
 		45D45C5F2089151A00FCF216 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45D45C5E2089151A00FCF216 /* AppDelegate.swift */; };
 		45D45C612089151A00FCF216 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45D45C602089151A00FCF216 /* ViewController.swift */; };
 		45D45C642089151A00FCF216 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 45D45C622089151A00FCF216 /* Main.storyboard */; };
@@ -15,6 +16,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		20D62A77208E54230033B4E0 /* CosmicImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmicImage.swift; sourceTree = "<group>"; };
 		45D45C5B2089151A00FCF216 /* OpenGLTesting.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenGLTesting.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		45D45C5E2089151A00FCF216 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		45D45C602089151A00FCF216 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
@@ -56,6 +58,7 @@
 			children = (
 				45D45C5E2089151A00FCF216 /* AppDelegate.swift */,
 				45D45C602089151A00FCF216 /* ViewController.swift */,
+				20D62A77208E54230033B4E0 /* CosmicImage.swift */,
 				45D45C622089151A00FCF216 /* Main.storyboard */,
 				45D45C652089151B00FCF216 /* Assets.xcassets */,
 				45D45C672089151B00FCF216 /* LaunchScreen.storyboard */,
@@ -135,6 +138,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				20D62A78208E54230033B4E0 /* CosmicImage.swift in Sources */,
 				45D45C612089151A00FCF216 /* ViewController.swift in Sources */,
 				45D45C5F2089151A00FCF216 /* AppDelegate.swift in Sources */,
 			);
@@ -281,13 +285,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 8QEZ7W968S;
+				DEVELOPMENT_TEAM = 8YK8DXZM9G;
 				INFOPLIST_FILE = OpenGLTesting/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 11.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.gmail.rowbottomn.OpenGLTesting;
+				PRODUCT_BUNDLE_IDENTIFIER = com.Ansar.Khan;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos11.3;
 				SWIFT_VERSION = 4.0;
@@ -300,13 +305,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 8QEZ7W968S;
+				DEVELOPMENT_TEAM = 8YK8DXZM9G;
 				INFOPLIST_FILE = OpenGLTesting/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 11.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.gmail.rowbottomn.OpenGLTesting;
+				PRODUCT_BUNDLE_IDENTIFIER = com.Ansar.Khan;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos11.3;
 				SWIFT_VERSION = 4.0;
