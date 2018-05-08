@@ -22,21 +22,32 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     
     var timer:Timer!;
 
+     enum DetectionModes {
+        case YUV420v
+        case BGRA
+    }
+
     
     //MARK: Variables
     var droppedFrames = 0
     var numFrames = 0
     var numEvents = 0
-    var accData = (x: 0.0, y: 0.0, z:1.0)
+    var accData = (x: 0.0, y: 0.0, z:-1.0)
     var isFlat: Bool = false
     var timeStarted = CFAbsoluteTimeGetCurrent()
     var timeElapsed = CFAbsoluteTimeGetCurrent()
     var flux : Double = 0
+     let detectionMode = DetectionModes.YUV420v
     var pixelsToSkip : Int = 4
     //moved this to the outside
     var scale = UIScreen.main.scale
     var newFrame = CGRect(x: 0, y: 0, width: 100, height:100 )
-    let intensityThreshhold :CGFloat = 450;//350 high 2 frameskip
+    let intensityThreshholds = [
+        (DetectionModes.BGRA, CGFloat(450.0)),//350 high 2 frameskip
+        (DetectionModes.YUV420v, CGFloat(120))
+    
+    ]
+    
     //make the queue for the frames
     let imageQueue = DispatchQueue(label:"ca.hdsb.solta.queue")
     
@@ -154,8 +165,21 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             
             let dataOutput = AVCaptureVideoDataOutput()
             //this next bit I have to admit if me flying by the seat of my pants...just swinging at getting a format
-            let mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[2]//<==32 Bit BGRA
-         //   print("Pixel Type: \(mostValidPixelType)")
+           // let mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[0]//<==32 Bit BGRA 0,2
+            var mostValidPixelType =  dataOutput.availableVideoPixelFormatTypes[0]
+            //0 == YUV 420V
+            //2 == BGRA
+            
+            switch detectionMode {
+            case .BGRA:
+                mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[2]
+                break
+            case .YUV420v:
+                mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[0]
+                break
+            }
+            
+            //print("Pixel Type: \(mostValidPixelType)")
             dataOutput.videoSettings = [(kCVPixelBufferPixelFormatTypeKey as NSString):NSNumber(value: mostValidPixelType)] as [String : Any] //kCVPixelFormatType_32RGBA <== it really wants a string
             dataOutput.alwaysDiscardsLateVideoFrames = true //May have to relax this...
             
@@ -177,14 +201,14 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         
         if !isFlat{
-           /* if glContext != EAGLContext.current(){
-                EAGLContext.setCurrent(glContext)
-            }
-            */
-            
-            //
-        
-            //let invalidCIImage = CIImage(cgImage: (invalidStateImage?.cgImage)!)
+//            if glContext != EAGLContext.current(){
+//                EAGLContext.setCurrent(glContext)
+//            }
+//
+//
+//            //
+//
+//            let invalidCIImage = CIImage(cgImage: (ViewController.invalidStateImage?.cgImage)!)
             
            glView.bindDrawable()
             if (glContext != nil && image != nil){
@@ -227,28 +251,37 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             for y in stride(from: 0, to: height, by: pixelsToSkip) {
                 
                 let index = x +  y * bytesPerRow
+                let isCosmicRay = false;
+                let intensity: CGFloat;
                 
-                let b = buffer[index]
-                let g = buffer[index+1]
-                let r = buffer[index+2]
-                
-                //let c = (cosmicImage.getColor(x: i, y: j))
-                
-                //let intensity = c.red + c.blue + c.green
-                let value =  (CGFloat(r) + CGFloat(b) + CGFloat(g))
-                
-                let intensity: CGFloat = value
+                switch detectionMode {
+                case .BGRA:
+                    let b = buffer[index]
+                    let g = buffer[index+1]
+                    let r = buffer[index+2]
+
+                    intensity =  (CGFloat(r) + CGFloat(b) + CGFloat(g))
+                    
+                    break;
+                case .YUV420v:
+                     let y = buffer[index]
+                     intensity = (CGFloat(y));
+                    // print(intensity)
+                     break
+                }
                 
                 if(intensity > highestIntensity){
                     highestIntensity = intensity;
                     highestIntensityPoint = CGPoint(x: x, y: y);
                 }
                 
+              
+                
             }
             
-            //print("Analyzing Row \(i)")
+            //print("Analyzing Row \(x) ______________________________")
         }
-        
+        let intensityThreshhold = getIntensityThreshold(mode: detectionMode)
         if(highestIntensity >= intensityThreshhold){
      
             let pixelX = highestIntensityPoint.x
@@ -257,7 +290,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             let rect = CGRect(x: pixelX - pixelW/2, y: pixelY - pixelW/2, width: pixelX + pixelW/2, height: pixelY + pixelW/2)
             let vec = CIVector(x: pixelX - pixelW/2, y: pixelY - pixelW/2, z: pixelX + pixelW/2, w: pixelY + pixelW/2)
  
-            AudioServicesPlayAlertSound(SystemSoundID(1322))
+       //     AudioServicesPlayAlertSound(SystemSoundID(1322))
             numEvents += 1
             timeElapsed = CFAbsoluteTimeGetCurrent() -  timeStarted
             flux = Double(numEvents)/timeElapsed
@@ -346,7 +379,21 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
 //        }
     }
     
+    func getIntensityThreshold(mode: DetectionModes) -> CGFloat{
+        for data in intensityThreshholds{
+            let tempDetectionMode = data.0;
+            if(mode == tempDetectionMode){
+                return data.1
+            }
+            
+        }
+        print("Unable to Get Threshold")
+        return 0;
+    }
+    
 }
+
+
 
 extension UIColor {
     var red: CGFloat{ return self.cgColor.components![0] }
