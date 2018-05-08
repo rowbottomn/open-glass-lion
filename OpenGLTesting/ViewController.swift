@@ -44,7 +44,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     var newFrame = CGRect(x: 0, y: 0, width: 100, height:100 )
     let intensityThreshholds = [
         (DetectionModes.BGRA, CGFloat(450.0)),//350 high 2 frameskip
-        (DetectionModes.YUV420v, CGFloat(120))
+        (DetectionModes.YUV420v, CGFloat(150))
     
     ]
     
@@ -290,7 +290,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             let rect = CGRect(x: pixelX - pixelW/2, y: pixelY - pixelW/2, width: pixelX + pixelW/2, height: pixelY + pixelW/2)
             let vec = CIVector(x: pixelX - pixelW/2, y: pixelY - pixelW/2, z: pixelX + pixelW/2, w: pixelY + pixelW/2)
  
-       //     AudioServicesPlayAlertSound(SystemSoundID(1322))
+            AudioServicesPlayAlertSound(SystemSoundID(1322))
             numEvents += 1
             timeElapsed = CFAbsoluteTimeGetCurrent() -  timeStarted
             flux = Double(numEvents)/timeElapsed
