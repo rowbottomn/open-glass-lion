@@ -10,7 +10,7 @@ import UIKit
 import GLKit
 import AVFoundation
 import CoreMotion
-
+import CoreGraphics
 
 class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
 
@@ -19,28 +19,41 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     @IBOutlet weak var cameraView: UIView!
     
     let motionManager = CMMotionManager()
+    
     var timer:Timer!;
-    
-    var accData = (x: 0.0, y: 0.0, z:0.0)
-    var isFlat: Bool = false;
 
-    
-    
+     enum DetectionModes {
+        case YUV420v
+        case BGRA
+    }
 
     
     //MARK: Variables
     var droppedFrames = 0
-    //move this to the outside
+    var numFrames = 0
+    var numEvents = 0
+    var accData = (x: 0.0, y: 0.0, z:-1.0)
+    var isFlat: Bool = false
+    var timeStarted = CFAbsoluteTimeGetCurrent()
+    var timeElapsed = CFAbsoluteTimeGetCurrent()
+    var flux : Double = 0
+     let detectionMode = DetectionModes.YUV420v
+    var pixelsToSkip : Int = 4
+    //moved this to the outside
     var scale = UIScreen.main.scale
-    var newFrame = CGRect(x: 0, y: 0, width: 0, height:0 )
+    var newFrame = CGRect(x: 0, y: 0, width: 100, height:100 )
+    let intensityThreshholds = [
+        (DetectionModes.BGRA, CGFloat(450.0)),//350 high 2 frameskip
+        (DetectionModes.YUV420v, CGFloat(150))
+    
+    ]
     
     //make the queue for the frames
     let imageQueue = DispatchQueue(label:"ca.hdsb.solta.queue")
-    //multiple attempts of going from objective C methods
-    // let imageQueue = DispatchQueue.//dispatch_queue_create("ca.hdsb.solta.queue", DISPATCH_QUEUE_SERIAL)
     
+
     //MARK: object construction
-    var glContext: EAGLContext = {
+    lazy var glContext: EAGLContext = {
         let glContext = EAGLContext(api: .openGLES3)
         return glContext!
     }()
@@ -58,16 +71,35 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         return ciContext
     }()
     
+    //image to display to the user  <==was in captureOutput but does not need to be done every time thats called
+    static let invalidStateImage = UIImage(named: "spongeBob")
+    /*initializing the CIimage is very expensive so we will only make it one from the invalidState one,
+     but the instance variable for the image is not available yet since self is not finished setting up yet so
+     we have to make it static for use in the next line*/
+    lazy var image = CIImage(cgImage: (ViewController.invalidStateImage?.cgImage)!)
+    lazy  var cgimage = ciContext.createCGImage(image, from: image.extent)
+    var uiImage = UIImage()
     
     //obviously need a cameracapture session
     lazy var cameraSession: AVCaptureSession = {
        let session = AVCaptureSession()
        //testing difference between the two modes
-        //session.sessionPreset = AVCaptureSession.Preset.high
-        session.sessionPreset = AVCaptureSession.Preset.low
+        session.sessionPreset = AVCaptureSession.Preset.high
+        //session.sessionPreset = AVCaptureSession.Preset.low
         return session
     }()
     
+    
+    //for checking all the ciFilters
+    func logAllFilters() {
+        let properties = CIFilter.filterNames(inCategory: kCICategoryBuiltIn)
+        print("\(properties.debugDescription)")
+        
+        for filterName: Any in properties {
+            let fltr = CIFilter(name:filterName as! String)
+            print(fltr!.attributes)
+        }
+    }
     
     //MARK: viewController methods
     override func viewDidLoad() {
@@ -75,7 +107,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         motionManager.startAccelerometerUpdates()
         timer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(ViewController.updateAcc), userInfo: nil, repeats: true)
 
-
+      //  logAllFilters()
         setupCameraSession()
     }
 
@@ -98,8 +130,11 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     //use this method to see how many frames get dropped
     func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         droppedFrames = droppedFrames + 1
-        print("Dropped frames : \(droppedFrames)")
+     //   print("Dropped frames : \(droppedFrames) out of \(numFrames) = \(droppedFrames/numFrames*100)")
     }
+    
+
+    
     
     func setupCameraSession(){
         
@@ -111,7 +146,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
 
          //   newFrame = CGRect(x: 0, y: 0, width: cameraView.frame.width*scale, height: cameraView.frame.height*scale)
        // newFrame = CGRect(x: 0, y: 0, width: cameraView.frame.width, height: cameraView.frame.height)
-                newFrame = CGRect(x: 0, y: 0, width: cameraView.frame.height*1.65*scale, height: cameraView.frame.width*2.08*scale)
+        newFrame = CGRect(x: 0, y: 0, width: cameraView.frame.height*1.65*scale, height: cameraView.frame.width*2.08*scale)
         //input handling
         //get the camera device, making sure its the rear facing; NOTe that the wideangle seems to be the general purpose
         let captureDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: AVMediaType.video, position: .back)
@@ -130,10 +165,23 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             
             let dataOutput = AVCaptureVideoDataOutput()
             //this next bit I have to admit if me flying by the seat of my pants...just swinging at getting a format
-            let mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[2]//<==32 Bit BGRA
-            print("Pixel Type: \(mostValidPixelType)")
+           // let mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[0]//<==32 Bit BGRA 0,2
+            var mostValidPixelType =  dataOutput.availableVideoPixelFormatTypes[0]
+            //0 == YUV 420V
+            //2 == BGRA
+            
+            switch detectionMode {
+            case .BGRA:
+                mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[2]
+                break
+            case .YUV420v:
+                mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[0]
+                break
+            }
+            
+            //print("Pixel Type: \(mostValidPixelType)")
             dataOutput.videoSettings = [(kCVPixelBufferPixelFormatTypeKey as NSString):NSNumber(value: mostValidPixelType)] as [String : Any] //kCVPixelFormatType_32RGBA <== it really wants a string
-            dataOutput.alwaysDiscardsLateVideoFrames = true //May have to relax this...I can't believe it will drop frames processing black
+            dataOutput.alwaysDiscardsLateVideoFrames = true //May have to relax this...
             
             if cameraSession.canAddOutput(dataOutput){
                 cameraSession.addOutput(dataOutput)
@@ -153,86 +201,134 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         
         if !isFlat{
-            if glContext != EAGLContext.current(){
-                EAGLContext.setCurrent(glContext)
+//            if glContext != EAGLContext.current(){
+//                EAGLContext.setCurrent(glContext)
+//            }
+//
+//
+//            //
+//
+//            let invalidCIImage = CIImage(cgImage: (ViewController.invalidStateImage?.cgImage)!)
+            
+           glView.bindDrawable()
+            if (glContext != nil && image != nil){
+            ciContext.draw(image, in: newFrame, from: (image.extent))
+            glView.display()
+                print("Put Phone Flat")
             }
-            
-            
-            let invalidStateImage = UIImage(named: "spongeBob")
-            let invalidCIImage = CIImage(cgImage: (invalidStateImage?.cgImage)!)
-                glView.bindDrawable()
-            ciContext.draw((invalidCIImage), in: newFrame, from: (invalidCIImage.extent))
-                glView.display()
-                //print("Put Phone Flat")
-            
             return;
         }
-        
-        //lets get those frames
+        numFrames += 1
+        //lets get those frame
         let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
-        let image = CIImage(cvPixelBuffer: pixelBuffer!)
-    
-        let uiImage = UIImage(cgImage: convertCIImageToCGImage(inputImage: image))
-        let cosmicImage = CosmicImage(image: uiImage);
         
+        //lock that buffer down
+        CVPixelBufferLockBaseAddress(pixelBuffer!, CVPixelBufferLockFlags(rawValue: 0))
+        let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer!)
+        
+        let buffer = baseAddress!.assumingMemoryBound(to: UInt8.self)
 
+        //let cosmicImage = CosmicImage(image: uiImage);
         
-        var highestIntensity = CGFloat.leastNormalMagnitude;
+        
+        var highestIntensity  = CGFloat.leastNormalMagnitude;
         var highestIntensityPoint = CGPoint(x: -1, y: -1);
         
         // Initialise an UIImage with our image data
-        //let capturedImage = UIImage.init(data: imageData , scale: 1.0)
+     //   let capturedImage = UIImage.init(data: imageData , scale: 1.0)
       
         let width = CVPixelBufferGetWidth(pixelBuffer!)
         let height = CVPixelBufferGetHeight(pixelBuffer!)
 
-        let pixelW : Int = 100
+        //let pixelW : Int = 100
         
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer!)
         
-        let pixelsToSkip = 10;
+      //  let pixelsToSkip = 2;
         
-        for i in stride(from: 0, to: width, by: pixelsToSkip) {
-            for j in stride(from: 0, to: height, by: pixelsToSkip) {
-                let c = (cosmicImage.getColor(x: i, y: j))
+     
+        for x in stride(from: 0, to: width, by: pixelsToSkip) {
+            for y in stride(from: 0, to: height, by: pixelsToSkip) {
                 
-                let intensity = c.red + c.blue + c.green
+                let index = x +  y * bytesPerRow
+                let isCosmicRay = false;
+                let intensity: CGFloat;
+                
+                switch detectionMode {
+                case .BGRA:
+                    let b = buffer[index]
+                    let g = buffer[index+1]
+                    let r = buffer[index+2]
+
+                    intensity =  (CGFloat(r) + CGFloat(b) + CGFloat(g))
+                    
+                    break;
+                case .YUV420v:
+                     let y = buffer[index]
+                     intensity = (CGFloat(y));
+                    // print(intensity)
+                     break
+                }
                 
                 if(intensity > highestIntensity){
                     highestIntensity = intensity;
-                    highestIntensityPoint = CGPoint(x: i, y: j);
+                    highestIntensityPoint = CGPoint(x: x, y: y);
                 }
+                
+              
                 
             }
             
-            //print("Analyzing Row \(i)")
+            //print("Analyzing Row \(x) ______________________________")
         }
-        
-        
-
-        if(highestIntensity >= 300){
-            let pixelX = Int(highestIntensityPoint.x);
-            let pixelY = Int(highestIntensityPoint.y);
+        let intensityThreshhold = getIntensityThreshold(mode: detectionMode)
+        if(highestIntensity >= intensityThreshhold){
+     
+            let pixelX = highestIntensityPoint.x
+            let pixelY = highestIntensityPoint.y
+            let pixelW  : CGFloat = 100//CGFloat(width/200) //might have to play with this number; its the dimesionof the cropped image
+            let rect = CGRect(x: pixelX - pixelW/2, y: pixelY - pixelW/2, width: pixelX + pixelW/2, height: pixelY + pixelW/2)
+            let vec = CIVector(x: pixelX - pixelW/2, y: pixelY - pixelW/2, z: pixelX + pixelW/2, w: pixelY + pixelW/2)
+ 
             AudioServicesPlayAlertSound(SystemSoundID(1322))
-            //print("Found me a cosmic  ray")
-            UIImageWriteToSavedPhotosAlbum(uiImage.crop(cropRect: CGRect(x: pixelX - pixelW/2, y: pixelX - pixelW/2, width: pixelX + pixelW/2, height: pixelX + pixelW/2)), nil, nil, nil)
+            numEvents += 1
+            timeElapsed = CFAbsoluteTimeGetCurrent() -  timeStarted
+            flux = Double(numEvents)/timeElapsed
+            
+            print("Found me a cosmic ray! \(highestIntensity) at \(pixelX), \(pixelY).  \(numEvents) events in \(timeElapsed) ms " )
+            print("The flux is  \(flux) " )
+            
+            image = CIImage(cvImageBuffer: pixelBuffer!)
+            
+            //maybe abstract this into a function later
+            let filter = CIFilter(name: "CICrop", withInputParameters: ["inputImage" : image, "inputRectangle" : vec])
+      print("filter is \(filter.debugDescription)")
+        
+            image = filter!.outputImage!
+            cgimage = ciContext.createCGImage(image, from: image.extent)
+            print("outputimage is \(cgimage.debugDescription)")
+            if (cgimage != nil){
+                uiImage = UIImage(cgImage: cgimage!)
+                UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
+            }
+         //   if glContext != EAGLContext.current(){
+           //     EAGLContext.setCurrent(glContext)
+          //  }
+            
+       //     glView.bindDrawable()
+            ciContext.draw(image, in: newFrame, from: image.extent)
+            glView.display()
+            
         }
         
-    
+        //release the buffer
+        CVPixelBufferUnlockBaseAddress(pixelBuffer!, CVPixelBufferLockFlags(rawValue: 0))
         
-    
 
-        
-        
-        if glContext != EAGLContext.current(){
-            EAGLContext.setCurrent(glContext)
-        }
-        
-        glView.bindDrawable()
-        ciContext.draw(image, in: newFrame, from: image.extent)
-        glView.display()
-        
         
     }
+    
+    
     func pixelFrom(x: Int, y: Int, frame: CVPixelBuffer) -> (UInt8, UInt8, UInt8) {
         let baseAddress = CVPixelBufferGetBaseAddress(frame)
         
@@ -249,11 +345,14 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         
         return (r, g, b)
     }
+    
     func convertCIImageToCGImage(inputImage: CIImage) -> CGImage! {
-        let context = CIContext(options: nil)
-        if context != nil {
-            return context.createCGImage(inputImage, from: inputImage.extent)
+        //let context = CIContext(options: nil)<== instead recycle the one main one
+        
+        if ciContext != nil {
+            return ciContext.createCGImage(inputImage, from: inputImage.extent)
         }
+        
         return nil
     }
     
@@ -280,7 +379,21 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
 //        }
     }
     
+    func getIntensityThreshold(mode: DetectionModes) -> CGFloat{
+        for data in intensityThreshholds{
+            let tempDetectionMode = data.0;
+            if(mode == tempDetectionMode){
+                return data.1
+            }
+            
+        }
+        print("Unable to Get Threshold")
+        return 0;
+    }
+    
 }
+
+
 
 extension UIColor {
     var red: CGFloat{ return self.cgColor.components![0] }
@@ -293,7 +406,7 @@ extension UIImage {
     {
         UIGraphicsBeginImageContextWithOptions(cropRect.size, false, 0);
         let context = UIGraphicsGetCurrentContext();
-        
+  
         context?.translateBy(x: 0.0, y: self.size.height);
         context?.scaleBy(x: 1.0, y: -1.0);
         context?.draw(self.cgImage!, in: CGRect(x:0, y:0, width:self.size.width, height:self.size.height), byTiling: false);
