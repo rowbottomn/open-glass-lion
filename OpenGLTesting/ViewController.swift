@@ -13,7 +13,7 @@ import CoreMotion
 import CoreGraphics
 
 class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
-
+    
     
     //MARK: outlets
     @IBOutlet weak var cameraView: UIView!
@@ -21,12 +21,23 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     let motionManager = CMMotionManager()
     
     var timer:Timer!;
-
-     enum DetectionModes {
+    
+    enum DetectionModes {
         case YUV420v
         case BGRA
     }
-
+    
+    enum OperationState {
+        case CALIBRATION
+        case DETECTION
+        case OTHER
+    }
+    
+    var currentState : OperationState = .CALIBRATION
+    
+    let INITIAL_INTENSITY = CGFloat(125)
+    
+    var successFrames = 4//this is the number of frames used in calibration
     
     //MARK: Variables
     var droppedFrames = 0
@@ -37,21 +48,21 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     var timeStarted = CFAbsoluteTimeGetCurrent()
     var timeElapsed = CFAbsoluteTimeGetCurrent()
     var flux : Double = 0
-     let detectionMode = DetectionModes.YUV420v
+    let detectionMode = DetectionModes.YUV420v
     var pixelsToSkip : Int = 4
     //moved this to the outside
     var scale = UIScreen.main.scale
     var newFrame = CGRect(x: 0, y: 0, width: 100, height:100 )
-    let intensityThreshholds = [
+    var intensityThreshholds = [
         (DetectionModes.BGRA, CGFloat(450.0)),//350 high 2 frameskip
         (DetectionModes.YUV420v, CGFloat(150))
-    
+        
     ]
     
     //make the queue for the frames
     let imageQueue = DispatchQueue(label:"ca.hdsb.solta.queue")
     
-
+    
     //MARK: object construction
     lazy var glContext: EAGLContext = {
         let glContext = EAGLContext(api: .openGLES3)
@@ -67,7 +78,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     
     //CIContext is used for image processing
     lazy var ciContext: CIContext = {
-       let ciContext = CIContext(eaglContext: self.glContext)
+        let ciContext = CIContext(eaglContext: self.glContext)
         return ciContext
     }()
     
@@ -82,8 +93,8 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     
     //obviously need a cameracapture session
     lazy var cameraSession: AVCaptureSession = {
-       let session = AVCaptureSession()
-       //testing difference between the two modes
+        let session = AVCaptureSession()
+        //testing difference between the two modes
         session.sessionPreset = AVCaptureSession.Preset.high
         //session.sessionPreset = AVCaptureSession.Preset.low
         return session
@@ -106,11 +117,11 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         super.viewDidLoad()
         motionManager.startAccelerometerUpdates()
         timer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(ViewController.updateAcc), userInfo: nil, repeats: true)
-
-      //  logAllFilters()
+        
+        //  logAllFilters()
         setupCameraSession()
     }
-
+    
     override func viewDidAppear(_ animated: Bool) {
         cameraView.addSubview(glView)
         cameraSession.startRunning()
@@ -120,9 +131,9 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         super.didReceiveMemoryWarning()
         // Dispose of any resources that can be recreated.
     }
-
+    
     override func viewDidDisappear(_ animated: Bool) {
-      //  imageQueue.  //<==not sure if/how I need to dismiss this
+        //  imageQueue.  //<==not sure if/how I need to dismiss this
     }
     
     
@@ -130,22 +141,22 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     //use this method to see how many frames get dropped
     func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         droppedFrames = droppedFrames + 1
-     //   print("Dropped frames : \(droppedFrames) out of \(numFrames) = \(droppedFrames/numFrames*100)")
+        //   print("Dropped frames : \(droppedFrames) out of \(numFrames) = \(droppedFrames/numFrames*100)")
     }
     
-
+    
     
     
     func setupCameraSession(){
         
         //setup the cameraView a bit better
-           cameraView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
-            cameraView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-            cameraView.leftAnchor.constraint(equalTo: view.leftAnchor)
-            scale = UIScreen.main.scale
-
-         //   newFrame = CGRect(x: 0, y: 0, width: cameraView.frame.width*scale, height: cameraView.frame.height*scale)
-       // newFrame = CGRect(x: 0, y: 0, width: cameraView.frame.width, height: cameraView.frame.height)
+        cameraView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+        cameraView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        cameraView.leftAnchor.constraint(equalTo: view.leftAnchor)
+        scale = UIScreen.main.scale
+        
+        //   newFrame = CGRect(x: 0, y: 0, width: cameraView.frame.width*scale, height: cameraView.frame.height*scale)
+        // newFrame = CGRect(x: 0, y: 0, width: cameraView.frame.width, height: cameraView.frame.height)
         newFrame = CGRect(x: 0, y: 0, width: cameraView.frame.height*1.65*scale, height: cameraView.frame.width*2.08*scale)
         //input handling
         //get the camera device, making sure its the rear facing; NOTe that the wideangle seems to be the general purpose
@@ -165,7 +176,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             
             let dataOutput = AVCaptureVideoDataOutput()
             //this next bit I have to admit if me flying by the seat of my pants...just swinging at getting a format
-           // let mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[0]//<==32 Bit BGRA 0,2
+            // let mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[0]//<==32 Bit BGRA 0,2
             var mostValidPixelType =  dataOutput.availableVideoPixelFormatTypes[0]
             //0 == YUV 420V
             //2 == BGRA
@@ -200,20 +211,25 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     //MARK: AVCaptureVideoDataOutputSampleBufferDelegate
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         
-        if !isFlat{
-//            if glContext != EAGLContext.current(){
-//                EAGLContext.setCurrent(glContext)
-//            }
-//
-//
-//            //
-//
-//            let invalidCIImage = CIImage(cgImage: (ViewController.invalidStateImage?.cgImage)!)
+        if (currentState == .CALIBRATION){
             
-           glView.bindDrawable()
+            
+        }
+        
+        if !isFlat{
+            //            if glContext != EAGLContext.current(){
+            //                EAGLContext.setCurrent(glContext)
+            //            }
+            //
+            //
+            //            //
+            //
+            //            let invalidCIImage = CIImage(cgImage: (ViewController.invalidStateImage?.cgImage)!)
+            
+            glView.bindDrawable()
             if (glContext != nil && image != nil){
-            ciContext.draw(image, in: newFrame, from: (image.extent))
-            glView.display()
+                ciContext.draw(image, in: newFrame, from: (image.extent))
+                glView.display()
                 print("Put Phone Flat")
             }
             return;
@@ -227,7 +243,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer!)
         
         let buffer = baseAddress!.assumingMemoryBound(to: UInt8.self)
-
+        
         //let cosmicImage = CosmicImage(image: uiImage);
         
         
@@ -235,18 +251,18 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         var highestIntensityPoint = CGPoint(x: -1, y: -1);
         
         // Initialise an UIImage with our image data
-     //   let capturedImage = UIImage.init(data: imageData , scale: 1.0)
-      
+        //   let capturedImage = UIImage.init(data: imageData , scale: 1.0)
+        
         let width = CVPixelBufferGetWidth(pixelBuffer!)
         let height = CVPixelBufferGetHeight(pixelBuffer!)
-
+        
         //let pixelW : Int = 100
         
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer!)
         
-      //  let pixelsToSkip = 2;
+        //  let pixelsToSkip = 2;
         
-     
+        
         for x in stride(from: 0, to: width, by: pixelsToSkip) {
             for y in stride(from: 0, to: height, by: pixelsToSkip) {
                 
@@ -259,15 +275,15 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
                     let b = buffer[index]
                     let g = buffer[index+1]
                     let r = buffer[index+2]
-
+                    
                     intensity =  (CGFloat(r) + CGFloat(b) + CGFloat(g))
                     
                     break;
                 case .YUV420v:
-                     let y = buffer[index]
-                     intensity = (CGFloat(y));
+                    let y = buffer[index]
+                    intensity = (CGFloat(y));
                     // print(intensity)
-                     break
+                    break
                 }
                 
                 if(intensity > highestIntensity){
@@ -275,7 +291,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
                     highestIntensityPoint = CGPoint(x: x, y: y);
                 }
                 
-              
+                
                 
             }
             
@@ -283,13 +299,13 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         }
         let intensityThreshhold = getIntensityThreshold(mode: detectionMode)
         if(highestIntensity >= intensityThreshhold){
-     
+            
             let pixelX = highestIntensityPoint.x
             let pixelY = highestIntensityPoint.y
             let pixelW  : CGFloat = 100//CGFloat(width/200) //might have to play with this number; its the dimesionof the cropped image
             let rect = CGRect(x: pixelX - pixelW/2, y: pixelY - pixelW/2, width: pixelX + pixelW/2, height: pixelY + pixelW/2)
             let vec = CIVector(x: pixelX - pixelW/2, y: pixelY - pixelW/2, z: pixelX + pixelW/2, w: pixelY + pixelW/2)
- 
+            
             AudioServicesPlayAlertSound(SystemSoundID(1322))
             numEvents += 1
             timeElapsed = CFAbsoluteTimeGetCurrent() -  timeStarted
@@ -302,8 +318,8 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             
             //maybe abstract this into a function later
             let filter = CIFilter(name: "CICrop", withInputParameters: ["inputImage" : image, "inputRectangle" : vec])
-      print("filter is \(filter.debugDescription)")
-        
+            print("filter is \(filter.debugDescription)")
+            
             image = filter!.outputImage!
             cgimage = ciContext.createCGImage(image, from: image.extent)
             print("outputimage is \(cgimage.debugDescription)")
@@ -311,11 +327,11 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
                 uiImage = UIImage(cgImage: cgimage!)
                 UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
             }
-         //   if glContext != EAGLContext.current(){
-           //     EAGLContext.setCurrent(glContext)
-          //  }
+            //   if glContext != EAGLContext.current(){
+            //     EAGLContext.setCurrent(glContext)
+            //  }
             
-       //     glView.bindDrawable()
+            //     glView.bindDrawable()
             ciContext.draw(image, in: newFrame, from: image.extent)
             glView.display()
             
@@ -324,7 +340,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         //release the buffer
         CVPixelBufferUnlockBaseAddress(pixelBuffer!, CVPixelBufferLockFlags(rawValue: 0))
         
-
+        
         
     }
     
@@ -357,26 +373,26 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     }
     
     @objc func updateAcc() {
-//        if let accelerometerData = motionManager.accelerometerData {
-//            print(accelerometerData)
-//        }
+        //        if let accelerometerData = motionManager.accelerometerData {
+        //            print(accelerometerData)
+        //        }
         if let ad = motionManager.accelerometerData {
-        
+            
             accData.x = ad.acceleration.x
             accData.y = ad.acceleration.y;
             accData.z = ad.acceleration.z;
-          //  print("RAWWWW:  x: \(ad.rotationRate.x) y: \(ad.rotationRate.y) z: \(ad.rotationRate.z)")
+            //  print("RAWWWW:  x: \(ad.rotationRate.x) y: \(ad.rotationRate.y) z: \(ad.rotationRate.z)")
             
         }
         isFlat = accData.z <= -0.95;
         //print("x: \(accData.x) y: \(accData.y) z: \(accData.z)")
         //print(isFlat)
-//        if let magnetometerData = motionManager.magnetometerData {
-//            print(magnetometerData)
-//        }
-//        if let deviceMotion = motionManager.deviceMotion {
-//            print(deviceMotion)
-//        }
+        //        if let magnetometerData = motionManager.magnetometerData {
+        //            print(magnetometerData)
+        //        }
+        //        if let deviceMotion = motionManager.deviceMotion {
+        //            print(deviceMotion)
+        //        }
     }
     
     func getIntensityThreshold(mode: DetectionModes) -> CGFloat{
@@ -401,12 +417,12 @@ extension UIColor {
     var blue: CGFloat{ return self.cgColor.components![2] }
 }
 extension UIImage {
-
+    
     func crop(cropRect:CGRect) -> UIImage
     {
         UIGraphicsBeginImageContextWithOptions(cropRect.size, false, 0);
         let context = UIGraphicsGetCurrentContext();
-  
+        
         context?.translateBy(x: 0.0, y: self.size.height);
         context?.scaleBy(x: 1.0, y: -1.0);
         context?.draw(self.cgImage!, in: CGRect(x:0, y:0, width:self.size.width, height:self.size.height), byTiling: false);
