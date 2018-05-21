@@ -177,7 +177,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             //this next bit I have to admit if me flying by the seat of my pants...just swinging at getting a format
            // let mostValidPixelType = dataOutput.availableVideoPixelFormatTypes[0]//<==32 Bit BGRA 0,2
             var mostValidPixelType =  dataOutput.availableVideoPixelFormatTypes[0]
-            //0 == YUV 420V 
+            //0 == YUV 420V
             //2 == BGRA
             
             switch detectionMode {
@@ -303,11 +303,14 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
                 let rect = CGRect(x: pixelX - pixelW/2, y: pixelY - pixelW/2, width: pixelX + pixelW/2, height: pixelY + pixelW/2)
                 let vec = CIVector(x: pixelX - pixelW/2, y: pixelY - pixelW/2, z: pixelX + pixelW/2, w: pixelY + pixelW/2)
                 
-                AudioServicesPlayAlertSound(SystemSoundID(1322))
+               
                 numEvents += 1
                 timeElapsed = CFAbsoluteTimeGetCurrent() -  timeStarted
                 flux = Double(numEvents)/timeElapsed
                 
+                if (flux > targetFlux*1.5){
+                    return;
+                }
                 print("Found me a cosmic ray! \(highestIntensity) at \(pixelX), \(pixelY).  \(numEvents) events in \(timeElapsed) ms " )
                 print("The flux is  \(flux) " )
                 let percent = Double (numBrightPixels) / Double(width * height)
@@ -326,6 +329,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
                     uiImage = UIImage(cgImage: cgimage!)
                     UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
                 }
+                 AudioServicesPlayAlertSound(SystemSoundID(1322))
                 //   if glContext != EAGLContext.current(){
                 //     EAGLContext.setCurrent(glContext)
                 //  }
