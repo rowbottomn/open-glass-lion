@@ -26,6 +26,11 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         case YUV420v
         case BGRA
     }
+    enum OperationState{
+        case CALIBRATION
+        case RUNNING
+        case DORMANT
+    }
 
     
     //MARK: Variables
@@ -37,16 +42,19 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     var timeStarted = CFAbsoluteTimeGetCurrent()
     var timeElapsed = CFAbsoluteTimeGetCurrent()
     var flux : Double = 0
+    let targetFlux = 1.0/10.0;
      let detectionMode = DetectionModes.YUV420v
     var pixelsToSkip : Int = 4
     //moved this to the outside
     var scale = UIScreen.main.scale
     var newFrame = CGRect(x: 0, y: 0, width: 100, height:100 )
-    let intensityThreshholds = [
+    var intensityThreshholds = [
         (DetectionModes.BGRA, CGFloat(450.0)),//350 high 2 frameskip
-        (DetectionModes.YUV420v, CGFloat(150))
-    
+        (DetectionModes.YUV420v, CGFloat(160))
     ]
+    var minRaySize = 4;//numberof pixels that represents how many pizels should be in an image
+    var currentState: OperationState = OperationState.RUNNING;
+    
     
     //make the queue for the frames
     let imageQueue = DispatchQueue(label:"ca.hdsb.solta.queue")
@@ -106,6 +114,8 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         super.viewDidLoad()
         motionManager.startAccelerometerUpdates()
         timer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(ViewController.updateAcc), userInfo: nil, repeats: true)
+        timer = Timer.scheduledTimer(timeInterval: 5, target: self, selector: #selector(ViewController.updateThreshold), userInfo: nil, repeats: true)
+
 
       //  logAllFilters()
         setupCameraSession()
@@ -199,131 +209,153 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     
     //MARK: AVCaptureVideoDataOutputSampleBufferDelegate
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        
+      
         if !isFlat{
-//            if glContext != EAGLContext.current(){
-//                EAGLContext.setCurrent(glContext)
-//            }
-//
-//
-//            //
-//
-//            let invalidCIImage = CIImage(cgImage: (ViewController.invalidStateImage?.cgImage)!)
+            currentState = .DORMANT
+        }
+        else{
+            currentState = .RUNNING
+        }
+        
+        numFrames += 1
+        
+        switch (currentState){
+
+        
+        case .RUNNING, .CALIBRATION:
+            //lets get those frame
+            let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
             
-           glView.bindDrawable()
+            //lock that buffer down
+            CVPixelBufferLockBaseAddress(pixelBuffer!, CVPixelBufferLockFlags(rawValue: 0))
+            let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer!)
+            
+            let buffer = baseAddress!.assumingMemoryBound(to: UInt8.self)
+            
+            //let cosmicImage = CosmicImage(image: uiImage);
+            
+            
+            var highestIntensity  = CGFloat.leastNormalMagnitude;
+            var highestIntensityPoint = CGPoint(x: -1, y: -1);
+            
+            // Initialise an UIImage with our image data
+            //   let capturedImage = UIImage.init(data: imageData , scale: 1.0)
+            
+            let width = CVPixelBufferGetWidth(pixelBuffer!)
+            let height = CVPixelBufferGetHeight(pixelBuffer!)
+            
+            //let pixelW : Int = 100
+            
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer!)
+            
+            //  let pixelsToSkip = 2;
+            
+            var numBrightPixels = 0;
+            
+
+            
+            for x in stride(from: 0, to: width, by: pixelsToSkip) {
+                for y in stride(from: 0, to: height, by: pixelsToSkip) {
+                    
+                    let index = x +  y * bytesPerRow
+                    let isCosmicRay = false;
+                    let intensity: CGFloat;
+                    
+                    switch detectionMode {
+                    case .BGRA:
+                        let b = buffer[index]
+                        let g = buffer[index+1]
+                        let r = buffer[index+2]
+                        
+                        intensity =  (CGFloat(r) + CGFloat(b) + CGFloat(g))
+                        
+                        break;
+                    case .YUV420v:
+                        let y = buffer[index]
+                        intensity = (CGFloat(y));
+                        // print(intensity)
+                        break
+                    }
+                    
+                    if (intensity > getIntensityThreshold(mode: detectionMode)*0.75){
+                        numBrightPixels += 1;
+                    }
+                    if(intensity > highestIntensity){
+                        highestIntensity = intensity;
+                        highestIntensityPoint = CGPoint(x: x, y: y);
+                    }
+                    
+                    
+                    
+                    
+                }
+                
+                //print("Analyzing Row \(x) ______________________________")
+            }
+            let intensityThreshhold = getIntensityThreshold(mode: detectionMode)
+            if(highestIntensity >= intensityThreshhold
+                && numBrightPixels >= minRaySize
+                && numBrightPixels <= Int(Double(width*height)*0.25)){
+                
+                let pixelX = highestIntensityPoint.x
+                let pixelY = highestIntensityPoint.y
+                let pixelW  : CGFloat = 100//CGFloat(width/200) //might have to play with this number; its the dimesionof the cropped image
+                let rect = CGRect(x: pixelX - pixelW/2, y: pixelY - pixelW/2, width: pixelX + pixelW/2, height: pixelY + pixelW/2)
+                let vec = CIVector(x: pixelX - pixelW/2, y: pixelY - pixelW/2, z: pixelX + pixelW/2, w: pixelY + pixelW/2)
+                
+               
+                numEvents += 1
+                timeElapsed = CFAbsoluteTimeGetCurrent() -  timeStarted
+                flux = Double(numEvents)/timeElapsed
+                
+                if (flux > targetFlux*1.5){
+                    return;
+                }
+                print("Found me a cosmic ray! \(highestIntensity) at \(pixelX), \(pixelY).  \(numEvents) events in \(timeElapsed) ms " )
+                print("The flux is  \(flux) " )
+                let percent = Double (numBrightPixels) / Double(width * height)
+                print("Percentage of Bright Pixels: \(percent * 100.0 )")
+                print("Threshold is \(getIntensityThreshold(mode: detectionMode))")
+                image = CIImage(cvImageBuffer: pixelBuffer!)
+                
+                //maybe abstract this into a function later
+                let filter = CIFilter(name: "CICrop", withInputParameters: ["inputImage" : image, "inputRectangle" : vec])
+               // print("filter is \(filter.debugDescription)")
+                
+                image = filter!.outputImage!
+                cgimage = ciContext.createCGImage(image, from: image.extent)
+               // print("outputimage is \(cgimage.debugDescription)")
+                if (cgimage != nil){
+                    uiImage = UIImage(cgImage: cgimage!)
+                    UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
+                }
+                 AudioServicesPlayAlertSound(SystemSoundID(1322))
+                //   if glContext != EAGLContext.current(){
+                //     EAGLContext.setCurrent(glContext)
+                //  }
+                
+                glView.bindDrawable()
+                ciContext.draw(image, in: newFrame, from: image.extent)
+                glView.display()
+                
+            }
+            
+            //release the buffer
+            CVPixelBufferUnlockBaseAddress(pixelBuffer!, CVPixelBufferLockFlags(rawValue: 0))
+            break;
+            
+        case .DORMANT:
+            glView.bindDrawable()
             if (glContext != nil && image != nil){
-            ciContext.draw(image, in: newFrame, from: (image.extent))
-            glView.display()
+                ciContext.draw(image, in: newFrame, from: (image.extent))
+                glView.display()
                 print("Put Phone Flat")
             }
             return;
         }
-        numFrames += 1
-        //lets get those frame
-        let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
-        
-        //lock that buffer down
-        CVPixelBufferLockBaseAddress(pixelBuffer!, CVPixelBufferLockFlags(rawValue: 0))
-        let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer!)
-        
-        let buffer = baseAddress!.assumingMemoryBound(to: UInt8.self)
-
-        //let cosmicImage = CosmicImage(image: uiImage);
         
         
-        var highestIntensity  = CGFloat.leastNormalMagnitude;
-        var highestIntensityPoint = CGPoint(x: -1, y: -1);
-        
-        // Initialise an UIImage with our image data
-     //   let capturedImage = UIImage.init(data: imageData , scale: 1.0)
-      
-        let width = CVPixelBufferGetWidth(pixelBuffer!)
-        let height = CVPixelBufferGetHeight(pixelBuffer!)
-
-        //let pixelW : Int = 100
-        
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer!)
-        
-      //  let pixelsToSkip = 2;
-        
-     
-        for x in stride(from: 0, to: width, by: pixelsToSkip) {
-            for y in stride(from: 0, to: height, by: pixelsToSkip) {
-                
-                let index = x +  y * bytesPerRow
-                let isCosmicRay = false;
-                let intensity: CGFloat;
-                
-                switch detectionMode {
-                case .BGRA:
-                    let b = buffer[index]
-                    let g = buffer[index+1]
-                    let r = buffer[index+2]
-
-                    intensity =  (CGFloat(r) + CGFloat(b) + CGFloat(g))
-                    
-                    break;
-                case .YUV420v:
-                     let y = buffer[index]
-                     intensity = (CGFloat(y));
-                    // print(intensity)
-                     break
-                }
-                
-                if(intensity > highestIntensity){
-                    highestIntensity = intensity;
-                    highestIntensityPoint = CGPoint(x: x, y: y);
-                }
-                
-              
-                
-            }
-            
-            //print("Analyzing Row \(x) ______________________________")
-        }
-        let intensityThreshhold = getIntensityThreshold(mode: detectionMode)
-        if(highestIntensity >= intensityThreshhold){
-     
-            let pixelX = highestIntensityPoint.x
-            let pixelY = highestIntensityPoint.y
-            let pixelW  : CGFloat = 100//CGFloat(width/200) //might have to play with this number; its the dimesionof the cropped image
-            let rect = CGRect(x: pixelX - pixelW/2, y: pixelY - pixelW/2, width: pixelX + pixelW/2, height: pixelY + pixelW/2)
-            let vec = CIVector(x: pixelX - pixelW/2, y: pixelY - pixelW/2, z: pixelX + pixelW/2, w: pixelY + pixelW/2)
- 
-            AudioServicesPlayAlertSound(SystemSoundID(1322))
-            numEvents += 1
-            timeElapsed = CFAbsoluteTimeGetCurrent() -  timeStarted
-            flux = Double(numEvents)/timeElapsed
-            
-            print("Found me a cosmic ray! \(highestIntensity) at \(pixelX), \(pixelY).  \(numEvents) events in \(timeElapsed) ms " )
-            print("The flux is  \(flux) " )
-            
-            image = CIImage(cvImageBuffer: pixelBuffer!)
-            
-            //maybe abstract this into a function later
-            let filter = CIFilter(name: "CICrop", withInputParameters: ["inputImage" : image, "inputRectangle" : vec])
-      print("filter is \(filter.debugDescription)")
-        
-            image = filter!.outputImage!
-            cgimage = ciContext.createCGImage(image, from: image.extent)
-            print("outputimage is \(cgimage.debugDescription)")
-            if (cgimage != nil){
-                uiImage = UIImage(cgImage: cgimage!)
-                UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
-            }
-         //   if glContext != EAGLContext.current(){
-           //     EAGLContext.setCurrent(glContext)
-          //  }
-            
-       //     glView.bindDrawable()
-            ciContext.draw(image, in: newFrame, from: image.extent)
-            glView.display()
-            
-        }
-        
-        //release the buffer
-        CVPixelBufferUnlockBaseAddress(pixelBuffer!, CVPixelBufferLockFlags(rawValue: 0))
-        
+       
 
         
     }
@@ -354,6 +386,15 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         }
         
         return nil
+    }
+    
+    @objc func updateThreshold(){
+        timeElapsed = CFAbsoluteTimeGetCurrent() -  timeStarted
+        flux = Double(numEvents)/timeElapsed
+        if (flux > targetFlux){
+            incrementIntensityThreshold(mode: detectionMode, value: 5)
+            
+        }
     }
     
     @objc func updateAcc() {
@@ -389,6 +430,20 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         }
         print("Unable to Get Threshold")
         return 0;
+    }
+    func setIntensityThreshold(mode: DetectionModes, value: Double) -> Void{
+        switch(mode){
+        case .BGRA:
+            intensityThreshholds[0].1 = CGFloat(value)
+        
+        case .YUV420v:
+            intensityThreshholds[1].1 = CGFloat(value)
+        }
+        print("Changed intensity to \(getIntensityThreshold(mode: mode))")
+        
+    }
+    func incrementIntensityThreshold(mode: DetectionModes, value: Double){
+        setIntensityThreshold(mode: mode, value: Double(getIntensityThreshold(mode: mode))+(value))
     }
     
 }
